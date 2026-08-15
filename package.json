@@ -1,0 +1,43 @@
+{
+  "name": "humanize",
+  "version": "0.1.0",
+  "description": "Rewrite AI-generated text so it reads like a person wrote it, at a reading grade level you pick.",
+  "keywords": [
+    "cli",
+    "ai",
+    "claude",
+    "anthropic",
+    "readability",
+    "flesch-kincaid",
+    "writing",
+    "rewrite"
+  ],
+  "license": "MIT",
+  "bin": {
+    "humanize": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "postbuild": "node -e \"require('fs').chmodSync('dist/cli.js', 0o755)\"",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});require('fs').rmSync('.test-build',{recursive:true,force:true})\"",
+    "test": "tsc -p tsconfig.test.json && node --test \".test-build/test/*.test.js\"",
+    "prepublishOnly": "npm run clean && npm run build && npm test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "^5.9.3"
+  }
+}
