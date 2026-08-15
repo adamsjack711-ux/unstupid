@@ -107,11 +107,15 @@ $ find drafts -name '*.txt' -exec sh -c 'humanize "$1" -o "${1%.txt}.clean.txt"'
 | --- | --- |
 | `0` | Success |
 | `1` | API or network error (auth failure, rate limit, timeout, unreachable) |
-| `2` | Bad usage, unreadable input, or `ANTHROPIC_API_KEY` not set |
+| `2` | Bad usage, unreadable input, unwritable `--out`, or `ANTHROPIC_API_KEY` not set |
+
+Anything that can be caught before the API call is caught before the API call — a bad `--grade`, an unreadable input file, an unwritable `--out` — so a mistake never costs you a request. If the write somehow fails afterwards anyway, the rewrite is printed to stdout rather than thrown away.
 
 ## Notes and limits
 
-**Output length.** The API call uses `max_tokens: 1000`, roughly 750 words. Longer input will be truncated mid-rewrite; when that happens the tool prints a warning to stderr. Split long documents and run them in pieces.
+**Output length.** The API call uses `max_tokens: 1000`, roughly 750 words. Longer input gets truncated mid-rewrite. The tool warns on stderr twice about this — once before the call if the input is over ~700 words, and again afterwards if the model actually hit the ceiling. Split long documents and run them in pieces; chunking is not built in.
+
+**`--out` overwrites without asking.** Including when the target is the file you're rewriting. `humanize draft.txt -o draft.txt` replaces `draft.txt` in place with no prompt and no backup, so keep the original in version control if you care about it.
 
 **The model can still be wrong.** The prompt tells Claude to preserve every fact, figure, and claim, and in practice it does — but this is a language model, not a diffing tool with guarantees. For anything where accuracy matters, read `--diff` before you ship the result.
 
@@ -119,7 +123,7 @@ $ find drafts -name '*.txt' -exec sh -c 'humanize "$1" -o "${1%.txt}.clean.txt"'
 
 **Syllable counting is heuristic.** Flesch-Kincaid needs syllable counts, and this uses the standard vowel-group approach with corrections for silent `-e`, `-ed`, and `-es`. It's a good approximation, not a pronunciation dictionary, so unusual words will be off by one now and then. Sentence splitting handles decimals, ellipses, initials (`J. R. R. Tolkien`), and common abbreviations (`Dr.`, `etc.`).
 
-**The spinner gets out of your way.** It draws on stderr only when both stdout and stderr are terminals and `CI` is unset, so it never appears in redirected output or logs.
+**The spinner gets out of your way.** It draws on stderr only when both stdout and stderr are terminals and `CI` is unset, so it never appears in redirected output or logs. It hides the terminal cursor while running and restores it on exit, including on Ctrl-C — interrupting a request will not leave your terminal in a broken state.
 
 ## Library use
 

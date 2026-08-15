@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { GRADE_PRESETS, parseGrade, parseStrength } from '../src/cli';
+import { GRADE_PRESETS, assertWritableTarget, parseGrade, parseStrength } from '../src/cli';
 import { buildSystemPrompt, isStrength, MAX_TOKENS, MODEL } from '../src/claudeClient';
 
 describe('parseGrade', () => {
@@ -27,6 +30,26 @@ describe('parseGrade', () => {
     assert.throws(() => parseGrade('8.5'), /expected/);
     assert.throws(() => parseGrade(''), /expected/);
   });
+
+  it('rejects numeric-looking strings that are not plain integers', () => {
+    for (const value of ['+8', ' 8', '8 ', '1e1', '0x8', '٨', '-8']) {
+      assert.throws(() => parseGrade(value), /expected/, `should reject ${JSON.stringify(value)}`);
+    }
+  });
+
+  it('does not resolve preset names up the prototype chain', () => {
+    // A plain `GRADE_PRESETS[key]` lookup returns Object.prototype members for
+    // these, which used to sail through validation as a "valid" grade.
+    for (const key of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+      assert.throws(() => parseGrade(key), /expected/, `should reject ${key}`);
+    }
+  });
+
+  it('always returns a number for accepted input', () => {
+    for (const value of ['3', '16', 'elementary', 'graduate']) {
+      assert.equal(typeof parseGrade(value), 'number');
+    }
+  });
 });
 
 describe('parseStrength', () => {
@@ -48,6 +71,40 @@ describe('isStrength', () => {
     assert.ok(!isStrength('gentle'));
   });
 });
+
+describe('assertWritableTarget', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'humanize-test-'));
+
+  it('accepts a new file in an existing directory', () => {
+    assert.doesNotThrow(() => assertWritableTarget(join(dir, 'new.txt')));
+  });
+
+  it('accepts an existing writable file', () => {
+    const existing = join(dir, 'existing.txt');
+    writeFileSync(existing, 'x');
+    assert.doesNotThrow(() => assertWritableTarget(existing));
+  });
+
+  it('rejects a path whose directory does not exist', () => {
+    assert.throws(
+      () => assertWritableTarget(join(dir, 'missing', 'out.txt')),
+      /no such directory/,
+    );
+  });
+
+  it('rejects a directory as the output path', () => {
+    assert.throws(() => assertWritableTarget(dir), /is a directory/);
+  });
+
+  it('names the path the user actually typed in the error', () => {
+    const target = join(dir, 'missing', 'out.txt');
+    assert.throws(() => assertWritableTarget(target), new RegExp(escapeRegExp(target)));
+  });
+});
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 describe('request configuration', () => {
   it('pins the model and token budget the spec requires', () => {

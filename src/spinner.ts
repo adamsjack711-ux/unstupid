@@ -36,6 +36,32 @@ export function createSpinner(label: string, options: SpinnerOptions = {}): Spin
   let frame = 0;
   let drawn = false;
 
+  // The spinner hides the terminal cursor, so it owns putting it back. Without
+  // these hooks a Ctrl-C mid-request leaves the user's terminal with an
+  // invisible cursor until they run `reset`.
+  const onExit = (): void => {
+    if (drawn) stream.write('\r\u001b[2K');
+    stream.write('\u001b[?25h');
+  };
+  const onSignal = (signal: NodeJS.Signals): void => {
+    cleanup();
+    onExit();
+    // We took over the signal by listening for it, so perform the default
+    // action ourselves: exit with 128 + the signal number.
+    process.exit(signal === 'SIGINT' ? 130 : 143);
+  };
+
+  const install = (): void => {
+    process.on('exit', onExit);
+    process.on('SIGINT', onSignal);
+    process.on('SIGTERM', onSignal);
+  };
+  const cleanup = (): void => {
+    process.off('exit', onExit);
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+  };
+
   const render = (): void => {
     stream.write(`\r\u001b[2K${FRAMES[frame % FRAMES.length]} ${label}`);
     frame++;
@@ -47,6 +73,7 @@ export function createSpinner(label: string, options: SpinnerOptions = {}): Spin
 
     start(): void {
       if (!enabled || timer) return;
+      install();
       stream.write('\u001b[?25l'); // hide cursor
       render();
       timer = setInterval(render, FRAME_MS);
@@ -60,6 +87,7 @@ export function createSpinner(label: string, options: SpinnerOptions = {}): Spin
         timer = undefined;
       }
       if (!enabled) return;
+      cleanup();
       if (drawn) {
         stream.write('\r\u001b[2K');
         drawn = false;

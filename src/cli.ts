@@ -5,12 +5,13 @@
  * Exit codes: 0 success, 1 API/network failure, 2 bad usage or missing config.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { Command, CommanderError, InvalidArgumentError } from 'commander';
 
 import { makeColors, type Colors } from './colors';
 import { unifiedDiff } from './diff';
-import { analyze, describeEase, type ReadabilityScores } from './readability';
+import { analyze, describeEase, splitWords, type ReadabilityScores } from './readability';
 import {
   ApiError,
   MissingApiKeyError,
@@ -28,6 +29,11 @@ const EXIT_USAGE = 2;
 const MIN_GRADE = 3;
 const MAX_GRADE = 16;
 const DEFAULT_GRADE = 8;
+
+/** Roughly how many words fit in the model's 1000-token output budget. */
+const OUTPUT_WORD_BUDGET = 750;
+/** Warn past this, while leaving room for a rewrite that tightens the text. */
+const LONG_INPUT_WORDS = 700;
 
 /** Named shorthands for common target grade levels. */
 export const GRADE_PRESETS: Record<string, number> = {
@@ -49,8 +55,10 @@ interface CliOptions {
 
 /** Resolve `--grade`: a preset name or an integer in [3, 16]. */
 export function parseGrade(raw: string): number {
-  const preset = GRADE_PRESETS[raw.toLowerCase()];
-  if (preset !== undefined) return preset;
+  // Object.hasOwn, not a plain lookup: `GRADE_PRESETS['constructor']` would
+  // otherwise resolve up the prototype chain and hand back a function.
+  const key = raw.toLowerCase();
+  if (Object.hasOwn(GRADE_PRESETS, key)) return GRADE_PRESETS[key]!;
 
   if (!/^\d+$/.test(raw)) {
     throw new InvalidArgumentError(
@@ -149,6 +157,44 @@ async function readInput(file: string | undefined): Promise<string> {
 
 class UsageError extends Error {}
 
+function describeFsError(error: unknown): string {
+  switch ((error as NodeJS.ErrnoException).code) {
+    case 'ENOENT':
+      return 'no such directory';
+    case 'EACCES':
+    case 'EPERM':
+      return 'permission denied';
+    case 'EISDIR':
+      return 'path is a directory';
+    case 'ENOSPC':
+      return 'no space left on device';
+    default:
+      return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/**
+ * Check that `--out` is writable *before* spending an API call on a rewrite we
+ * would then have nowhere to put. Checking up front cannot be airtight — the
+ * filesystem can change underneath us — so the write itself is still guarded.
+ */
+export function assertWritableTarget(target: string): void {
+  const full = resolve(target);
+  try {
+    if (existsSync(full)) {
+      if (statSync(full).isDirectory()) {
+        throw new UsageError(`cannot write to ${target}: path is a directory`);
+      }
+      accessSync(full, constants.W_OK);
+      return;
+    }
+    accessSync(dirname(full), constants.W_OK);
+  } catch (error) {
+    if (error instanceof UsageError) throw error;
+    throw new UsageError(`cannot write to ${target}: ${describeFsError(error)}`);
+  }
+}
+
 function renderStats(
   before: ReadabilityScores,
   after: ReadabilityScores,
@@ -199,6 +245,20 @@ async function run(argv: string[]): Promise<number> {
     throw new UsageError('input is empty; nothing to rewrite.');
   }
 
+  // Fail before the API call, not after it, so a bad path costs nothing.
+  if (options.out) assertWritableTarget(options.out);
+
+  const inputWords = splitWords(input).length;
+  if (inputWords > LONG_INPUT_WORDS) {
+    process.stderr.write(
+      stderrColors.yellow(
+        `warning: input is ${inputWords} words, but output is capped near ` +
+          `${OUTPUT_WORD_BUDGET}. The rewrite will almost certainly be cut short. ` +
+          'Split the input and run it in pieces.\n',
+      ),
+    );
+  }
+
   const spinner = createSpinner(`Rewriting for grade ${options.grade} (${options.strength})...`);
   spinner.start();
 
@@ -229,7 +289,17 @@ async function run(argv: string[]): Promise<number> {
   }
 
   if (options.out) {
-    writeFileSync(options.out, ensureTrailingNewline(result.text), 'utf8');
+    try {
+      writeFileSync(options.out, ensureTrailingNewline(result.text), 'utf8');
+    } catch (error) {
+      // The rewrite exists but has nowhere to go. Print it so the API call the
+      // user just paid for is not lost, then report the failure.
+      process.stdout.write(ensureTrailingNewline(result.text));
+      throw new UsageError(
+        `cannot write to ${options.out}: ${describeFsError(error)} ` +
+          '(the rewrite was printed to stdout instead)',
+      );
+    }
     process.stderr.write(stderrColors.dim(`wrote ${options.out}\n`));
   }
 
