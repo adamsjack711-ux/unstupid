@@ -37,6 +37,8 @@ export interface HumanizeRequest {
   strength: Strength;
   /** Output token budget. Defaults to MAX_TOKENS. */
   maxTokens?: number;
+  /** A sample of writing whose voice the rewrite should imitate. */
+  voiceSample?: string;
   /** Overrides the ANTHROPIC_API_KEY environment variable. */
   apiKey?: string;
   /** Per-request timeout in milliseconds. */
@@ -100,8 +102,43 @@ export function describeGrade(grade: number): string {
   return 'graduate';
 }
 
+/**
+ * Longest voice sample worth sending. A few hundred words is plenty to convey a
+ * voice, and the sample is pure overhead on every request.
+ */
+export const MAX_VOICE_WORDS = 400;
+
+/** Trim a voice sample to MAX_VOICE_WORDS, keeping whole words. */
+export function trimVoiceSample(sample: string): string {
+  const words = sample.trim().split(/\s+/).filter(Boolean);
+  return words.length <= MAX_VOICE_WORDS
+    ? words.join(' ')
+    : `${words.slice(0, MAX_VOICE_WORDS).join(' ')}...`;
+}
+
 /** Build the system prompt. Exported so it can be inspected and tested. */
-export function buildSystemPrompt(grade: number, strength: Strength): string {
+export function buildSystemPrompt(
+  grade: number,
+  strength: Strength,
+  voiceSample?: string,
+): string {
+  const voice = voiceSample?.trim()
+    ? [
+        '',
+        'Voice: match the writing style of the sample below. Copy its rhythm, its ' +
+          'sentence lengths, its level of formality, its vocabulary, its appetite ' +
+          'for sentence fragments, and its habits of punctuation. Do not copy any ' +
+          'of its content, subject matter, or specific phrases — only the manner ' +
+          'of writing. If the sample and the target reading level pull in ' +
+          'different directions, follow the sample; report the grade honestly ' +
+          'rather than distorting the voice to hit a number.',
+        '',
+        '<voice_sample>',
+        trimVoiceSample(voiceSample),
+        '</voice_sample>',
+      ]
+    : [];
+
   return [
     'You rewrite text so that it reads as though a thoughtful person wrote it, ' +
       'not as though it was generated.',
@@ -137,6 +174,7 @@ export function buildSystemPrompt(grade: number, strength: Strength): string {
       'vocabulary. Hit the level by rewriting, never by dropping content.',
     '',
     `How much to restructure: ${STRENGTH_GUIDANCE[strength]}`,
+    ...voice,
     '',
     'Return only the rewritten text. No preamble, no explanation, no commentary, ' +
       'no surrounding quotes, and no markdown code fences unless the original ' +
@@ -160,7 +198,7 @@ export async function humanize(request: HumanizeRequest): Promise<HumanizeResult
     response = await client.messages.create({
       model: MODEL,
       max_tokens: request.maxTokens ?? MAX_TOKENS,
-      system: buildSystemPrompt(request.grade, request.strength),
+      system: buildSystemPrompt(request.grade, request.strength, request.voiceSample),
       messages: [{ role: 'user', content: request.text }],
     });
   } catch (error) {

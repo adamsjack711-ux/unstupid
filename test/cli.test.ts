@@ -101,7 +101,7 @@ describe('assertWritableTarget', () => {
   it('rejects a path whose directory does not exist', () => {
     assert.throws(
       () => assertWritableTarget(join(dir, 'missing', 'out.txt')),
-      /no such directory/,
+      /no such file or directory/,
     );
   });
 

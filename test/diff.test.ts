@@ -61,13 +61,23 @@ describe('unifiedDiff', () => {
     assert.match(out, /no changes/);
   });
 
-  it('marks removals and additions', () => {
-    const out = unifiedDiff('The old sentence.', 'The new sentence.', {
+  it('marks removals and additions in sentence mode', () => {
+    // Enough shared sentences that auto mode stays on sentences.
+    const shared = 'Alpha here. Beta here. Gamma here.';
+    const out = unifiedDiff(`${shared} The old sentence.`, `${shared} The new sentence.`, {
       colors: plain,
       width: 80,
     });
     assert.match(out, /^- The old sentence\.$/m);
     assert.match(out, /^\+ The new sentence\.$/m);
+  });
+
+  it('marks a wholly rewritten sentence inline instead, via auto mode', () => {
+    const out = unifiedDiff('The old sentence.', 'The new sentence.', {
+      colors: plain,
+      width: 80,
+    });
+    assert.match(out, /~ The \[-old-\] \{\+new\+\} sentence\./);
   });
 
   it('elides unchanged runs beyond the context window', () => {

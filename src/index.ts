@@ -22,6 +22,8 @@ export {
   STRENGTHS,
   buildSystemPrompt,
   describeGrade,
+  trimVoiceSample,
+  MAX_VOICE_WORDS,
   humanize,
   isStrength,
   type HumanizeRequest,
@@ -29,6 +31,16 @@ export {
   type Strength,
 } from './claudeClient';
 
-export { diffSegments, segment, unifiedDiff, type DiffOp, type DiffOptions } from './diff';
+export {
+  chooseMode,
+  diffSegments,
+  paragraphs,
+  segment,
+  tokenizeWords,
+  unifiedDiff,
+  type DiffMode,
+  type DiffOp,
+  type DiffOptions,
+} from './diff';
 export { makeColors, supportsColor, type Colors } from './colors';
 export { GRADE_PRESETS } from './cli';

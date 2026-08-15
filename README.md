@@ -55,9 +55,10 @@ $ pbpaste | unstupid --grade middle
 | `-g, --grade <level>` | `8` | Target Flesch-Kincaid grade, `3`–`16`, or a preset name |
 | `-s, --strength <level>` | `medium` | How much to restructure: `light`, `medium`, `heavy` |
 | `-m, --max-tokens <n>` | `1000` | Output token budget, `100`–`16000`. Raise it for longer documents |
+| `-v, --voice <file>` | — | A sample of writing whose style the rewrite should copy |
 | `-o, --out <file>` | — | Write the result to a file instead of stdout |
 | `--stats` | off | Print before/after readability scores to **stderr** |
-| `--diff` | off | Print a sentence-level diff to stdout instead of the text |
+| `--diff` | off | Print a diff to stdout instead of the text |
 | `--no-color` | — | Disable coloured output |
 | `-h, --help` | — | Show help |
 
@@ -78,16 +79,33 @@ $ unstupid draft.txt --grade middle --stats
   44 words / 3 sentences  ->  38 words / 3 sentences
 ```
 
-See exactly which sentences changed:
+See exactly what changed. `--diff` picks its granularity from how much survived — if most sentences came through intact you get a sentence diff, and if the rewrite touched nearly everything you get an inline word diff instead:
 
 ```console
 $ unstupid draft.txt --diff
 --- original
 +++ rewritten
-- In today's rapidly evolving digital landscape, it is important to note that
-  organizations must navigate the complexities of data governance.
-+ Data governance is a mess right now, and companies have to deal with it.
+  [-removed-] {+added+}
+~ [-No-] {+There was no+} API key [-was available-] in the build environment, so
+  {+I tested+} the CLI [-was exercised end to end-] against a local mock of the
+  messages [-endpoint. That confirmed on-] {+endpoint instead. The mock showed
+  what actually went over+} the [-wire that it sends-] {+wire:+} the [-correct-]
+  {+right+} model.
 ```
+
+A sentence diff on a heavy rewrite is just the whole text printed twice, since no sentence survives to align against — hence the fallback. Force either view with `--diff-mode sentence` or `--diff-mode word` if the automatic choice is wrong for you.
+
+### Matching your voice
+
+Grade level controls complexity, not personality. To make the output sound like *you*, point `--voice` at something you wrote:
+
+```console
+$ unstupid draft.md --voice ~/notes/my-writing.md
+```
+
+The sample is sent as a style reference — sentence rhythm, formality, vocabulary, appetite for fragments, punctuation habits. Its *content* is explicitly off limits; only the manner of writing carries over. Samples are capped at 400 words, which is more than enough to convey a voice without inflating every request.
+
+If your voice and the grade target disagree — a terse style naturally scores lower than its `--grade` — the voice wins and `--stats` reports the grade it actually landed on. That's deliberate: distorting someone's voice to hit a number defeats the point.
 
 Heavy rewrite for a young audience, written to a file:
 

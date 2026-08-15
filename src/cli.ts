@@ -10,7 +10,7 @@ import { dirname, resolve } from 'node:path';
 import { Command, CommanderError, InvalidArgumentError } from 'commander';
 
 import { makeColors, type Colors } from './colors';
-import { unifiedDiff } from './diff';
+import { unifiedDiff, type DiffMode } from './diff';
 import { analyze, describeEase, splitWords, type ReadabilityScores } from './readability';
 import {
   ApiError,
@@ -53,9 +53,11 @@ interface CliOptions {
   grade: number;
   strength: Strength;
   maxTokens: number;
+  voice?: string;
   out?: string;
   stats?: boolean;
   diff?: boolean;
+  diffMode: DiffMode;
   color?: boolean;
 }
 
@@ -88,6 +90,17 @@ export function parseMaxTokens(raw: string): number {
     throw new InvalidArgumentError(`must be between ${MIN_TOKENS} and ${MAX_TOKENS_LIMIT}`);
   }
   return value;
+}
+
+const DIFF_MODES: readonly DiffMode[] = ['auto', 'sentence', 'word'];
+
+/** Resolve `--diff-mode`. */
+export function parseDiffMode(raw: string): DiffMode {
+  const value = raw.toLowerCase();
+  if (!(DIFF_MODES as readonly string[]).includes(value)) {
+    throw new InvalidArgumentError(`expected one of: ${DIFF_MODES.join(', ')}`);
+  }
+  return value as DiffMode;
 }
 
 export function parseStrength(raw: string): Strength {
@@ -124,9 +137,19 @@ function buildProgram(): Command {
       parseMaxTokens,
       MAX_TOKENS,
     )
+    .option(
+      '-v, --voice <file>',
+      'a sample of writing whose style the rewrite should imitate',
+    )
     .option('-o, --out <file>', 'write the result to a file instead of stdout')
     .option('--stats', 'print before/after readability scores to stderr')
-    .option('--diff', 'print a sentence-level diff instead of the rewritten text')
+    .option('--diff', 'print a diff instead of the rewritten text')
+    .option(
+      '--diff-mode <mode>',
+      `diff granularity (${DIFF_MODES.join(', ')}); auto picks by how much survived`,
+      parseDiffMode,
+      'auto' as DiffMode,
+    )
     .option('--no-color', 'disable coloured output')
     .addHelpText(
       'after',
@@ -140,6 +163,7 @@ function buildProgram(): Command {
         '  cat draft.txt | unstupid --grade middle',
         '  unstupid draft.txt -g 6 -s heavy -o clean.txt --stats',
         '  unstupid draft.txt --diff',
+        '  unstupid draft.txt --voice my-old-posts.md',
         '',
         'Exit codes:',
         '  0  success',
@@ -157,15 +181,19 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+/** Read a UTF-8 file, reporting failures as usage errors. */
+function readTextFile(file: string, what: string): string {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch (error) {
+    throw new UsageError(`cannot read ${what} ${file}: ${describeFsError(error)}`);
+  }
+}
+
 /** Read from the file argument, or stdin when it is piped. */
 async function readInput(file: string | undefined): Promise<string> {
   if (file) {
-    try {
-      return readFileSync(file, 'utf8');
-    } catch (error) {
-      const reason = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'no such file' : String(error);
-      throw new UsageError(`cannot read ${file}: ${reason}`);
-    }
+    return readTextFile(file, 'input');
   }
 
   if (process.stdin.isTTY) {
@@ -184,7 +212,7 @@ class UsageError extends Error {}
 function describeFsError(error: unknown): string {
   switch ((error as NodeJS.ErrnoException).code) {
     case 'ENOENT':
-      return 'no such directory';
+      return 'no such file or directory';
     case 'EACCES':
     case 'EPERM':
       return 'permission denied';
@@ -272,6 +300,14 @@ async function run(argv: string[]): Promise<number> {
   // Fail before the API call, not after it, so a bad path costs nothing.
   if (options.out) assertWritableTarget(options.out);
 
+  let voiceSample: string | undefined;
+  if (options.voice) {
+    voiceSample = readTextFile(options.voice, '--voice sample');
+    if (!voiceSample.trim()) {
+      throw new UsageError(`--voice file ${options.voice} is empty`);
+    }
+  }
+
   const inputWords = splitWords(input).length;
   const outputWordBudget = Math.round(options.maxTokens * WORDS_PER_TOKEN);
   if (inputWords > outputWordBudget * LONG_INPUT_RATIO) {
@@ -298,6 +334,7 @@ async function run(argv: string[]): Promise<number> {
       grade: options.grade,
       strength: options.strength,
       maxTokens: options.maxTokens,
+      voiceSample,
     });
   } finally {
     spinner.stop();
@@ -337,7 +374,7 @@ async function run(argv: string[]): Promise<number> {
   }
 
   if (options.diff) {
-    process.stdout.write(`${unifiedDiff(input, result.text, { colors: stdoutColors })}\n`);
+    process.stdout.write(`${unifiedDiff(input, result.text, { colors: stdoutColors, mode: options.diffMode })}\n`);
   } else if (!options.out) {
     process.stdout.write(ensureTrailingNewline(result.text));
   }
