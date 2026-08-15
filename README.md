@@ -72,11 +72,21 @@ Rewrite for a middle-school reading level and show the scores:
 
 ```console
 $ unstupid draft.txt --grade middle --stats
-  readability     grade    ease
-  before     18.0    -8.0  very difficult
-  after       6.1    73.8  fairly easy
-  target      7.0          grade -11.9
-  44 words / 3 sentences  ->  38 words / 3 sentences
+  readability           before   after
+  grade                   18.0     6.1  target 7.0, off by 0.9 (-11.9)
+  reading ease            -8.0    73.8  fairly easy
+  words                     44      38
+  sentences                  3       3
+
+  machine tells         before   after
+  overall /100              21     100  reads human
+  rhythm variance          3.8     1.2  too few sentences to score
+  stock phrases              5       0
+  em-dashes / 1k           0.0     0.0
+  transition opens         67%      0%
+
+  facts               4 checked, all preserved
+  usage               120 in / 64 out tokens, ~$0.0013
 ```
 
 See exactly what changed. `--diff` picks its granularity from how much survived — if most sentences came through intact you get a sentence diff, and if the rewrite touched nearly everything you get an inline word diff instead:
@@ -144,9 +154,31 @@ The tool warns on stderr in both directions — before the call if the input won
 
 **`--out` overwrites without asking.** Including when the target is the file you're rewriting. `unstupid draft.txt -o draft.txt` replaces `draft.txt` in place with no prompt and no backup, so keep the original in version control if you care about it.
 
-**The model can still be wrong.** The prompt tells Claude to preserve every fact, figure, and claim, and in practice it does — but this is a language model, not a diffing tool with guarantees. For anything where accuracy matters, read `--diff` before you ship the result.
+**Reading grade is not the same thing as sounding human.** Flesch-Kincaid has exactly two inputs: sentence length and syllables per word. It cannot see stock phrasing, monotonous rhythm, em-dash overuse, or a transition word welded to the front of every paragraph — which is to say it cannot see any of the things this tool is actually for. Text can score a perfect grade 8 and still read like a chatbot wrote it.
 
-**Grade targeting is approximate.** Claude aims at the grade level you ask for; it doesn't compute Flesch-Kincaid while writing. `--stats` tells you where it actually landed. If you're consistently overshooting, ask for a grade or two lower.
+That's why `--stats` reports a second block. The **machine tells** score measures the thing the tool is really trying to fix:
+
+| Signal | What a bad score means |
+| --- | --- |
+| rhythm variance | Every sentence is the same length. Human writing varies a lot. |
+| stock phrases | "delve into", "it is important to note", "a testament to", and about thirty more |
+| em-dashes / 1k | Two or three per thousand words is normal. Twelve is a tell. |
+| transition opens | Share of sentences starting on "Moreover", "Furthermore", "Therefore"… |
+
+Treat the overall score as a rough signal worth investigating, not a verdict. The thresholds behind it are judgement calls picked by eye, not empirically validated, and a determined writer can score well while still being dull. Rhythm is skipped entirely on texts under five sentences, where sentence-length spread means nothing.
+
+**Facts are checked, but only shallowly.** `--stats` extracts every number, acronym, and proper name from both versions and reports anything that vanished or appeared:
+
+```
+  facts               3 checked - MISSING 42, API; NEW 9999
+  check the --diff before trusting this rewrite.
+```
+
+A dropped or altered figure, or one invented out of nothing, gets caught. What this **cannot** catch is a reversed claim, a dropped qualifier, or a confident sentence turned hedged — meaning is beyond it. A name replaced by a pronoun is reported but not treated as a failure, since that's a legitimate rewrite. For anything where accuracy matters, still read the `--diff`.
+
+**Grade targeting is a request, not a contract.** Claude aims at the level you ask for; it doesn't compute Flesch-Kincaid while writing, and nothing retries when it misses. `--stats` shows you how far off it landed. If it consistently overshoots, ask for a grade or two lower.
+
+**Cost is an estimate.** The figure in `--stats` uses published list prices for the model, ignores any discount on your account, and will drift when prices change. It's there for order of magnitude, not billing.
 
 **Syllable counting is heuristic.** Flesch-Kincaid needs syllable counts, and this uses the standard vowel-group approach with corrections for silent `-e`, `-ed`, and `-es`. It's a good approximation, not a pronunciation dictionary, so unusual words will be off by one now and then. Sentence splitting handles decimals, ellipses, initials (`J. R. R. Tolkien`), and common abbreviations (`Dr.`, `etc.`).
 
@@ -188,7 +220,9 @@ Layout:
 | `src/readability.ts` | Flesch-Kincaid grade and reading ease; pure functions |
 | `src/claudeClient.ts` | The Anthropic API call and the system prompt |
 | `src/cli.ts` | Argument parsing, I/O, exit codes — the `bin` entry point |
-| `src/diff.ts` | Sentence-level LCS diff |
+| `src/tells.ts` | Machine-tells scoring; pure functions |
+| `src/facts.ts` | Fact-preservation check; pure functions |
+| `src/diff.ts` | Sentence- and word-level LCS diff |
 | `src/spinner.ts`, `src/colors.ts` | Terminal niceties, both self-disabling |
 | `test/` | `node:test` suites, no test framework dependency |
 | `scripts/smoke.sh` | Manual check against the real API |

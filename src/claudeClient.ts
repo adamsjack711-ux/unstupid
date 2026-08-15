@@ -20,6 +20,22 @@ export const MIN_TOKENS = 100;
 /** Rough words-per-token ratio for English prose, used to size warnings. */
 export const WORDS_PER_TOKEN = 0.75;
 
+/**
+ * List price for MODEL, in US dollars per million tokens. Used only to show an
+ * estimate alongside the token counts — it is a published rate that can change,
+ * and it ignores any discount on your account, so treat the figure as
+ * indicative rather than as billing.
+ */
+export const PRICE_PER_MTOK = { input: 3, output: 15 } as const;
+
+/** Estimated US dollar cost of a request, from its token counts. */
+export function estimateCost(inputTokens: number, outputTokens: number): number {
+  return (
+    (inputTokens / 1_000_000) * PRICE_PER_MTOK.input +
+    (outputTokens / 1_000_000) * PRICE_PER_MTOK.output
+  );
+}
+
 export const API_KEY_URL = 'https://console.anthropic.com/settings/keys';
 
 export type Strength = 'light' | 'medium' | 'heavy';

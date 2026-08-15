@@ -11,13 +11,16 @@ import { Command, CommanderError, InvalidArgumentError } from 'commander';
 
 import { makeColors, type Colors } from './colors';
 import { unifiedDiff, type DiffMode } from './diff';
-import { analyze, describeEase, splitWords, type ReadabilityScores } from './readability';
+import { analyze, describeEase, splitWords } from './readability';
+import { MIN_SENTENCES_FOR_RHYTHM, analyzeTells, describeTells } from './tells';
+import { checkFacts, describeFactCheck } from './facts';
 import {
   ApiError,
   MAX_TOKENS,
   MAX_TOKENS_LIMIT,
   MIN_TOKENS,
   MissingApiKeyError,
+  estimateCost,
   WORDS_PER_TOKEN,
   humanize,
   isStrength,
@@ -247,28 +250,84 @@ export function assertWritableTarget(target: string): void {
   }
 }
 
-function renderStats(
-  before: ReadabilityScores,
-  after: ReadabilityScores,
-  targetGrade: number,
-  colors: Colors,
-): string {
-  const row = (label: string, grade: string, ease: string, note: string): string =>
-    `  ${label.padEnd(8)}${grade.padStart(7)}${ease.padStart(8)}  ${colors.dim(note)}`;
+interface StatsInput {
+  before: string;
+  after: string;
+  targetGrade: number;
+  inputTokens: number;
+  outputTokens: number;
+  colors: Colors;
+}
 
-  const delta = Math.round((after.grade - before.grade) * 10) / 10;
-  const arrow = delta === 0 ? '' : delta < 0 ? `${delta}` : `+${delta}`;
+/**
+ * The stats block.
+ *
+ * Readability is reported first because it is what was asked for, but the
+ * tells score is the one that answers "does this still sound generated" —
+ * Flesch-Kincaid cannot see stock phrasing or monotonous rhythm at all.
+ */
+function renderStats(input: StatsInput): string {
+  const { colors, targetGrade } = input;
+  const before = analyze(input.before);
+  const after = analyze(input.after);
+  const tellsBefore = analyzeTells(input.before);
+  const tellsAfter = analyzeTells(input.after);
+  const facts = checkFacts(input.before, input.after);
 
-  return [
-    colors.bold('  readability     grade    ease'),
-    row('before', before.grade.toFixed(1), before.ease.toFixed(1), describeEase(before.ease)),
-    row('after', after.grade.toFixed(1), after.ease.toFixed(1), describeEase(after.ease)),
-    row('target', targetGrade.toFixed(1), '', arrow ? `grade ${arrow}` : 'grade unchanged'),
-    colors.dim(
-      `  ${before.words} words / ${before.sentences} sentences  ->  ` +
-        `${after.words} words / ${after.sentences} sentences`,
-    ),
-  ].join('\n');
+  const row = (label: string, a: string, b: string, note = ''): string =>
+    `  ${label.padEnd(20)}${a.padStart(8)}${b.padStart(8)}  ${colors.dim(note)}`.trimEnd();
+
+  const gradeDelta = Math.round((after.grade - before.grade) * 10) / 10;
+  const gradeMiss = Math.abs(after.grade - targetGrade);
+
+  const lines = [
+    colors.bold('  readability           before   after'),
+    row('grade', before.grade.toFixed(1), after.grade.toFixed(1),
+      `target ${targetGrade.toFixed(1)}` +
+        (gradeMiss <= 1.5 ? ', hit it' : `, off by ${gradeMiss.toFixed(1)}`) +
+        ` (${gradeDelta > 0 ? '+' : ''}${gradeDelta})`),
+    row('reading ease', before.ease.toFixed(1), after.ease.toFixed(1), describeEase(after.ease)),
+    row('words', String(before.words), String(after.words)),
+    row('sentences', String(before.sentences), String(after.sentences)),
+    '',
+    colors.bold('  machine tells         before   after'),
+    row('overall /100', String(tellsBefore.score), String(tellsAfter.score),
+      describeTells(tellsAfter.score)),
+    row('rhythm variance', tellsBefore.rhythm.toFixed(1), tellsAfter.rhythm.toFixed(1),
+      tellsAfter.sentences >= MIN_SENTENCES_FOR_RHYTHM
+        ? 'sentence-length spread, higher is better'
+        : 'too few sentences to score'),
+    row('stock phrases', String(tellsBefore.stockPhrases.length),
+      String(tellsAfter.stockPhrases.length),
+      tellsAfter.stockPhrases.slice(0, 3).join(', ')),
+    row('em-dashes / 1k', tellsBefore.emDashesPer1k.toFixed(1),
+      tellsAfter.emDashesPer1k.toFixed(1)),
+    row('transition opens', `${Math.round(tellsBefore.transitionOpenerRate * 100)}%`,
+      `${Math.round(tellsAfter.transitionOpenerRate * 100)}%`),
+    '',
+  ];
+
+  const factLine = describeFactCheck(facts);
+  lines.push(
+    facts.ok
+      ? `  ${'facts'.padEnd(20)}${colors.dim(factLine)}`
+      : `  ${'facts'.padEnd(20)}${colors.yellow(factLine)}`,
+  );
+  lines.push(
+    `  ${'usage'.padEnd(20)}` +
+      colors.dim(
+        `${input.inputTokens} in / ${input.outputTokens} out tokens, ~$` +
+          estimateCost(input.inputTokens, input.outputTokens).toFixed(4),
+      ),
+  );
+
+  if (!facts.ok) {
+    lines.push(
+      colors.yellow('  check the --diff before trusting this rewrite.'),
+    );
+  }
+
+  return lines.join('\n');
 }
 
 async function run(argv: string[]): Promise<number> {
@@ -353,9 +412,16 @@ async function run(argv: string[]): Promise<number> {
   }
 
   if (options.stats) {
-    const before = analyze(input);
-    const after = analyze(result.text);
-    process.stderr.write(`${renderStats(before, after, options.grade, stderrColors)}\n`);
+    process.stderr.write(
+      `${renderStats({
+        before: input,
+        after: result.text,
+        targetGrade: options.grade,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        colors: stderrColors,
+      })}\n`,
+    );
   }
 
   if (options.out) {

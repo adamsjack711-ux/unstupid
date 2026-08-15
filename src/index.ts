@@ -22,6 +22,8 @@ export {
   STRENGTHS,
   buildSystemPrompt,
   describeGrade,
+  estimateCost,
+  PRICE_PER_MTOK,
   trimVoiceSample,
   MAX_VOICE_WORDS,
   humanize,
@@ -42,5 +44,29 @@ export {
   type DiffOp,
   type DiffOptions,
 } from './diff';
+export {
+  MIN_SENTENCES_FOR_RHYTHM,
+  STOCK_PHRASES,
+  TRANSITION_OPENERS,
+  analyzeTells,
+  countEmDashes,
+  describeTells,
+  findStockPhrases,
+  stdev,
+  type TellScores,
+} from './tells';
+
+export {
+  checkFacts,
+  describeFactCheck,
+  extractAcronyms,
+  extractFacts,
+  extractNames,
+  extractNumbers,
+  type Fact,
+  type FactCheck,
+  type FactKind,
+} from './facts';
+
 export { makeColors, supportsColor, type Colors } from './colors';
 export { GRADE_PRESETS } from './cli';
