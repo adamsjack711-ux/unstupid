@@ -13,6 +13,15 @@
     "rewrite"
   ],
   "license": "MIT",
+  "author": "adamsjack711-ux",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adamsjack711-ux/unstupid.git"
+  },
+  "homepage": "https://github.com/adamsjack711-ux/unstupid#readme",
+  "bugs": {
+    "url": "https://github.com/adamsjack711-ux/unstupid/issues"
+  },
   "bin": {
     "unstupid": "dist/cli.js"
   },
@@ -20,7 +29,8 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18"
