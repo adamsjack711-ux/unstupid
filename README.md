@@ -1,11 +1,11 @@
-# humanize
+# unstupid
 
 Rewrite AI-generated text so it reads like a person wrote it — at a reading grade level you pick.
 
 It sends your text to Claude with a system prompt that targets the usual tells (uniform sentence rhythm, stock transitional phrases, em-dash overuse, bullet lists where prose would read better) while holding every fact and claim fixed. It then scores the before and after with Flesch-Kincaid so you can see what actually changed.
 
 ```console
-$ humanize draft.txt --grade 8 --stats
+$ unstupid draft.txt --grade 8 --stats
 ```
 
 ## Install
@@ -13,13 +13,13 @@ $ humanize draft.txt --grade 8 --stats
 Run it without installing:
 
 ```console
-$ npx humanize draft.txt
+$ npx unstupid draft.txt
 ```
 
 Or install it globally:
 
 ```console
-$ npm install -g humanize
+$ npm install -g unstupid
 ```
 
 Requires Node 18 or newer.
@@ -37,15 +37,15 @@ Without it the tool exits immediately with a message pointing at that page — i
 ## Usage
 
 ```
-humanize [options] [file]
+unstupid [options] [file]
 ```
 
 Text comes from the file argument, or from stdin when there's no argument:
 
 ```console
-$ humanize draft.txt
-$ cat draft.txt | humanize
-$ pbpaste | humanize --grade middle
+$ unstupid draft.txt
+$ cat draft.txt | unstupid
+$ pbpaste | unstupid --grade middle
 ```
 
 ### Options
@@ -54,6 +54,7 @@ $ pbpaste | humanize --grade middle
 | --- | --- | --- |
 | `-g, --grade <level>` | `8` | Target Flesch-Kincaid grade, `3`–`16`, or a preset name |
 | `-s, --strength <level>` | `medium` | How much to restructure: `light`, `medium`, `heavy` |
+| `-m, --max-tokens <n>` | `1000` | Output token budget, `100`–`16000`. Raise it for longer documents |
 | `-o, --out <file>` | — | Write the result to a file instead of stdout |
 | `--stats` | off | Print before/after readability scores to **stderr** |
 | `--diff` | off | Print a sentence-level diff to stdout instead of the text |
@@ -69,7 +70,7 @@ Grade presets: `elementary` (4), `middle` (7), `high-school` (10), `college` (13
 Rewrite for a middle-school reading level and show the scores:
 
 ```console
-$ humanize draft.txt --grade middle --stats
+$ unstupid draft.txt --grade middle --stats
   readability     grade    ease
   before     18.0    -8.0  very difficult
   after       6.1    73.8  fairly easy
@@ -80,9 +81,9 @@ $ humanize draft.txt --grade middle --stats
 See exactly which sentences changed:
 
 ```console
-$ humanize draft.txt --diff
+$ unstupid draft.txt --diff
 --- original
-+++ humanized
++++ rewritten
 - In today's rapidly evolving digital landscape, it is important to note that
   organizations must navigate the complexities of data governance.
 + Data governance is a mess right now, and companies have to deal with it.
@@ -91,14 +92,14 @@ $ humanize draft.txt --diff
 Heavy rewrite for a young audience, written to a file:
 
 ```console
-$ humanize report.md -g elementary -s heavy -o report.simple.md --stats
+$ unstupid report.md -g elementary -s heavy -o report.simple.md --stats
 ```
 
 Because stats and warnings go to stderr, the tool composes cleanly in a pipeline — `--stats` never pollutes the text you're piping onward:
 
 ```console
-$ humanize draft.txt --stats | wc -w
-$ find drafts -name '*.txt' -exec sh -c 'humanize "$1" -o "${1%.txt}.clean.txt"' _ {} \;
+$ unstupid draft.txt --stats | wc -w
+$ find drafts -name '*.txt' -exec sh -c 'unstupid "$1" -o "${1%.txt}.clean.txt"' _ {} \;
 ```
 
 ### Exit codes
@@ -113,9 +114,17 @@ Anything that can be caught before the API call is caught before the API call �
 
 ## Notes and limits
 
-**Output length.** The API call uses `max_tokens: 1000`, roughly 750 words. Longer input gets truncated mid-rewrite. The tool warns on stderr twice about this — once before the call if the input is over ~700 words, and again afterwards if the model actually hit the ceiling. Split long documents and run them in pieces; chunking is not built in.
+**Output length.** The default output budget is `max_tokens: 1000`, roughly 750 words; longer input gets truncated mid-rewrite. Raise it with `--max-tokens` up to 16000 (~12000 words):
 
-**`--out` overwrites without asking.** Including when the target is the file you're rewriting. `humanize draft.txt -o draft.txt` replaces `draft.txt` in place with no prompt and no backup, so keep the original in version control if you care about it.
+```console
+$ unstupid long-report.md --max-tokens 8000
+```
+
+The tool warns on stderr in both directions — before the call if the input won't fit the budget, and afterwards if the model actually hit the ceiling. Either warning names the flag and the current budget.
+
+16000 is the ceiling because this client is non-streaming and the SDK refuses non-streaming requests it expects to outlive the HTTP timeout. Past that you'd need to split the document; automatic chunking is not built in.
+
+**`--out` overwrites without asking.** Including when the target is the file you're rewriting. `unstupid draft.txt -o draft.txt` replaces `draft.txt` in place with no prompt and no backup, so keep the original in version control if you care about it.
 
 **The model can still be wrong.** The prompt tells Claude to preserve every fact, figure, and claim, and in practice it does — but this is a language model, not a diffing tool with guarantees. For anything where accuracy matters, read `--diff` before you ship the result.
 
@@ -130,7 +139,7 @@ Anything that can be caught before the API call is caught before the API call �
 The package also works as a dependency:
 
 ```ts
-import { analyze, humanize, unifiedDiff } from 'humanize';
+import { analyze, humanize, unifiedDiff } from 'unstupid';
 
 const before = analyze(draft);              // { grade, ease, sentences, words, syllables }
 const { text } = await humanize({ text: draft, grade: 8, strength: 'medium' });
@@ -147,6 +156,13 @@ $ npm run build      # tsc -> dist/
 $ npm test           # type-checks src + test, then runs node:test
 ```
 
+`npm test` is entirely offline, so the one thing it cannot tell you is whether the prompt produces good rewrites. `scripts/smoke.sh` covers that against the real API — it rewrites a fixture at grades 4, 8, and 13 and reports where each landed, so you can judge quality and grade accuracy by eye. Three API calls, and it needs `ANTHROPIC_API_KEY`:
+
+```console
+$ ./scripts/smoke.sh
+$ ./scripts/smoke.sh path/to/your-own-draft.txt
+```
+
 Layout:
 
 | Path | Purpose |
@@ -157,6 +173,7 @@ Layout:
 | `src/diff.ts` | Sentence-level LCS diff |
 | `src/spinner.ts`, `src/colors.ts` | Terminal niceties, both self-disabling |
 | `test/` | `node:test` suites, no test framework dependency |
+| `scripts/smoke.sh` | Manual check against the real API |
 
 ### Design notes
 
@@ -164,7 +181,7 @@ Layout:
 
 **Two runtime dependencies, deliberately.** `@anthropic-ai/sdk` and `commander`, nothing else. Colour output is about twenty lines of hand-rolled ANSI in `src/colors.ts` rather than a `chalk` dependency: chalk v5 is ESM-only (so it can't be `require`d from this build) and chalk v4 pulls in a small tree of its own. For six styles behind a TTY check, in-tree was the cheaper answer. Tests use the built-in `node:test` runner, so there are no test-framework dev dependencies either.
 
-**Streams are kept separate on purpose.** Rewritten text and diffs go to stdout; stats, warnings, and the spinner go to stderr. That's what makes `humanize draft.txt --stats | next-tool` behave.
+**Streams are kept separate on purpose.** Rewritten text and diffs go to stdout; stats, warnings, and the spinner go to stderr. That's what makes `unstupid draft.txt --stats | next-tool` behave.
 
 ## License
 

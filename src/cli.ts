@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * humanize — rewrite AI-generated text so it reads like a person wrote it.
+ * unstupid — rewrite AI-generated text so it reads like a person wrote it.
  *
  * Exit codes: 0 success, 1 API/network failure, 2 bad usage or missing config.
  */
@@ -14,7 +14,11 @@ import { unifiedDiff } from './diff';
 import { analyze, describeEase, splitWords, type ReadabilityScores } from './readability';
 import {
   ApiError,
+  MAX_TOKENS,
+  MAX_TOKENS_LIMIT,
+  MIN_TOKENS,
   MissingApiKeyError,
+  WORDS_PER_TOKEN,
   humanize,
   isStrength,
   STRENGTHS,
@@ -30,10 +34,11 @@ const MIN_GRADE = 3;
 const MAX_GRADE = 16;
 const DEFAULT_GRADE = 8;
 
-/** Roughly how many words fit in the model's 1000-token output budget. */
-const OUTPUT_WORD_BUDGET = 750;
-/** Warn past this, while leaving room for a rewrite that tightens the text. */
-const LONG_INPUT_WORDS = 700;
+/**
+ * Warn once the input gets this close to filling the output budget, leaving a
+ * little room for a rewrite that runs slightly longer than the original.
+ */
+const LONG_INPUT_RATIO = 0.93;
 
 /** Named shorthands for common target grade levels. */
 export const GRADE_PRESETS: Record<string, number> = {
@@ -47,6 +52,7 @@ export const GRADE_PRESETS: Record<string, number> = {
 interface CliOptions {
   grade: number;
   strength: Strength;
+  maxTokens: number;
   out?: string;
   stats?: boolean;
   diff?: boolean;
@@ -72,6 +78,18 @@ export function parseGrade(raw: string): number {
   return value;
 }
 
+/** Resolve `--max-tokens`: an integer in [MIN_TOKENS, MAX_TOKENS_LIMIT]. */
+export function parseMaxTokens(raw: string): number {
+  if (!/^\d+$/.test(raw)) {
+    throw new InvalidArgumentError(`expected a whole number of tokens`);
+  }
+  const value = Number(raw);
+  if (value < MIN_TOKENS || value > MAX_TOKENS_LIMIT) {
+    throw new InvalidArgumentError(`must be between ${MIN_TOKENS} and ${MAX_TOKENS_LIMIT}`);
+  }
+  return value;
+}
+
 export function parseStrength(raw: string): Strength {
   const value = raw.toLowerCase();
   if (!isStrength(value)) {
@@ -82,7 +100,7 @@ export function parseStrength(raw: string): Strength {
 
 function buildProgram(): Command {
   return new Command()
-    .name('humanize')
+    .name('unstupid')
     .description(
       'Rewrite AI-generated text so it reads like a person wrote it, at a reading grade level you pick.\n' +
         'Reads from a file argument or from stdin.',
@@ -100,6 +118,12 @@ function buildProgram(): Command {
       parseStrength,
       'medium' as Strength,
     )
+    .option(
+      '-m, --max-tokens <n>',
+      `output token budget (${MIN_TOKENS}-${MAX_TOKENS_LIMIT}); raise it for longer documents`,
+      parseMaxTokens,
+      MAX_TOKENS,
+    )
     .option('-o, --out <file>', 'write the result to a file instead of stdout')
     .option('--stats', 'print before/after readability scores to stderr')
     .option('--diff', 'print a sentence-level diff instead of the rewritten text')
@@ -112,10 +136,10 @@ function buildProgram(): Command {
         '  ANTHROPIC_API_KEY   required; get one at https://console.anthropic.com/settings/keys',
         '',
         'Examples:',
-        '  humanize draft.txt',
-        '  cat draft.txt | humanize --grade middle',
-        '  humanize draft.txt -g 6 -s heavy -o clean.txt --stats',
-        '  humanize draft.txt --diff',
+        '  unstupid draft.txt',
+        '  cat draft.txt | unstupid --grade middle',
+        '  unstupid draft.txt -g 6 -s heavy -o clean.txt --stats',
+        '  unstupid draft.txt --diff',
         '',
         'Exit codes:',
         '  0  success',
@@ -147,8 +171,8 @@ async function readInput(file: string | undefined): Promise<string> {
   if (process.stdin.isTTY) {
     throw new UsageError(
       'no input. Pass a file argument or pipe text on stdin:\n' +
-        '  humanize draft.txt\n' +
-        '  cat draft.txt | humanize',
+        '  unstupid draft.txt\n' +
+        '  cat draft.txt | unstupid',
     );
   }
 
@@ -249,12 +273,17 @@ async function run(argv: string[]): Promise<number> {
   if (options.out) assertWritableTarget(options.out);
 
   const inputWords = splitWords(input).length;
-  if (inputWords > LONG_INPUT_WORDS) {
+  const outputWordBudget = Math.round(options.maxTokens * WORDS_PER_TOKEN);
+  if (inputWords > outputWordBudget * LONG_INPUT_RATIO) {
+    const remedy =
+      options.maxTokens < MAX_TOKENS_LIMIT
+        ? `Raise --max-tokens (up to ${MAX_TOKENS_LIMIT}) or split the input and run it in pieces.`
+        : 'Split the input and run it in pieces.';
     process.stderr.write(
       stderrColors.yellow(
-        `warning: input is ${inputWords} words, but output is capped near ` +
-          `${OUTPUT_WORD_BUDGET}. The rewrite will almost certainly be cut short. ` +
-          'Split the input and run it in pieces.\n',
+        `warning: input is ${inputWords} words, but --max-tokens ${options.maxTokens} ` +
+          `allows only about ${outputWordBudget}. The rewrite will likely be cut short. ` +
+          `${remedy}\n`,
       ),
     );
   }
@@ -268,6 +297,7 @@ async function run(argv: string[]): Promise<number> {
       text: input,
       grade: options.grade,
       strength: options.strength,
+      maxTokens: options.maxTokens,
     });
   } finally {
     spinner.stop();
@@ -276,8 +306,11 @@ async function run(argv: string[]): Promise<number> {
   if (result.truncated) {
     process.stderr.write(
       stderrColors.yellow(
-        'warning: the model hit its output limit, so the rewrite may be cut short. ' +
-          'Try splitting the input into smaller pieces.\n',
+        `warning: the model hit its ${options.maxTokens}-token output limit, so the ` +
+          'rewrite is probably cut short. ' +
+          (options.maxTokens < MAX_TOKENS_LIMIT
+            ? `Retry with a higher --max-tokens (up to ${MAX_TOKENS_LIMIT}).\n`
+            : 'Split the input into smaller pieces.\n'),
       ),
     );
   }
@@ -317,7 +350,7 @@ function ensureTrailingNewline(text: string): string {
 }
 
 /**
- * Exit quietly when the reader of a pipe goes away, so `humanize --help | head`
+ * Exit quietly when the reader of a pipe goes away, so `unstupid --help | head`
  * behaves like every other Unix tool instead of dumping a stack trace.
  */
 function exitQuietlyOnBrokenPipe(stream: NodeJS.WriteStream): void {

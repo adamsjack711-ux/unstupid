@@ -1,6 +1,6 @@
 /**
  * Library entry point. The CLI lives in ./cli; everything it is built from is
- * re-exported here so `humanize` can also be used as a dependency.
+ * re-exported here so `unstupid` can also be used as a dependency.
  */
 
 export {

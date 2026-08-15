@@ -85,7 +85,7 @@ export function unifiedDiff(before: string, after: string, options: DiffOptions)
   const context = options.context ?? 1;
   const width = Math.max(40, options.width ?? process.stdout.columns ?? 80);
   const beforeLabel = options.beforeLabel ?? 'original';
-  const afterLabel = options.afterLabel ?? 'humanized';
+  const afterLabel = options.afterLabel ?? 'rewritten';
 
   const ops = diffSegments(segment(before), segment(after));
   const keep = markVisible(ops, context);

@@ -5,7 +5,20 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 export const MODEL = 'claude-sonnet-4-6';
+
+/** Default output budget. Roughly 750 words. */
 export const MAX_TOKENS = 1000;
+
+/**
+ * Ceiling for `--max-tokens`. The model itself goes far higher, but this client
+ * is non-streaming, and the SDK refuses non-streaming requests it estimates
+ * will outlive the HTTP timeout. Going past this needs a streaming rewrite.
+ */
+export const MAX_TOKENS_LIMIT = 16_000;
+export const MIN_TOKENS = 100;
+
+/** Rough words-per-token ratio for English prose, used to size warnings. */
+export const WORDS_PER_TOKEN = 0.75;
 
 export const API_KEY_URL = 'https://console.anthropic.com/settings/keys';
 
@@ -22,6 +35,8 @@ export interface HumanizeRequest {
   /** Target Flesch-Kincaid grade level, 3-16. */
   grade: number;
   strength: Strength;
+  /** Output token budget. Defaults to MAX_TOKENS. */
+  maxTokens?: number;
   /** Overrides the ANTHROPIC_API_KEY environment variable. */
   apiKey?: string;
   /** Per-request timeout in milliseconds. */
@@ -144,7 +159,7 @@ export async function humanize(request: HumanizeRequest): Promise<HumanizeResult
   try {
     response = await client.messages.create({
       model: MODEL,
-      max_tokens: MAX_TOKENS,
+      max_tokens: request.maxTokens ?? MAX_TOKENS,
       system: buildSystemPrompt(request.grade, request.strength),
       messages: [{ role: 'user', content: request.text }],
     });

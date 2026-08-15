@@ -4,8 +4,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { GRADE_PRESETS, assertWritableTarget, parseGrade, parseStrength } from '../src/cli';
-import { buildSystemPrompt, isStrength, MAX_TOKENS, MODEL } from '../src/claudeClient';
+import {
+  GRADE_PRESETS,
+  assertWritableTarget,
+  parseGrade,
+  parseMaxTokens,
+  parseStrength,
+} from '../src/cli';
+import {
+  buildSystemPrompt,
+  isStrength,
+  MAX_TOKENS,
+  MAX_TOKENS_LIMIT,
+  MIN_TOKENS,
+  MODEL,
+} from '../src/claudeClient';
 
 describe('parseGrade', () => {
   it('accepts numeric grades in range', () => {
@@ -73,7 +86,7 @@ describe('isStrength', () => {
 });
 
 describe('assertWritableTarget', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'humanize-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'unstupid-test-'));
 
   it('accepts a new file in an existing directory', () => {
     assert.doesNotThrow(() => assertWritableTarget(join(dir, 'new.txt')));
@@ -133,5 +146,35 @@ describe('buildSystemPrompt', () => {
     assert.match(prompt, /em-dashes sparingly/);
     assert.match(prompt, /Preserve every fact/);
     assert.match(prompt, /Return only the rewritten text/);
+  });
+});
+
+describe('parseMaxTokens', () => {
+  it('accepts values inside the supported range', () => {
+    assert.equal(parseMaxTokens('100'), 100);
+    assert.equal(parseMaxTokens('1000'), 1000);
+    assert.equal(parseMaxTokens('16000'), 16000);
+  });
+
+  it('rejects values outside it', () => {
+    assert.throws(() => parseMaxTokens('99'), /between 100 and 16000/);
+    assert.throws(() => parseMaxTokens('16001'), /between 100 and 16000/);
+    assert.throws(() => parseMaxTokens('0'), /between 100 and 16000/);
+  });
+
+  it('rejects anything that is not a plain integer', () => {
+    for (const value of ['1e4', '1_000', '1000.0', '-1000', ' 1000', 'lots']) {
+      assert.throws(
+        () => parseMaxTokens(value),
+        /expected|between/,
+        `should reject ${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  it('defaults to the spec value and stays under the non-streaming ceiling', () => {
+    assert.equal(MAX_TOKENS, 1000);
+    assert.ok(MAX_TOKENS <= MAX_TOKENS_LIMIT);
+    assert.ok(MIN_TOKENS < MAX_TOKENS);
   });
 });

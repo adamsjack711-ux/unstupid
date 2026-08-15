@@ -1,5 +1,5 @@
 {
-  "name": "humanize",
+  "name": "unstupid",
   "version": "0.1.0",
   "description": "Rewrite AI-generated text so it reads like a person wrote it, at a reading grade level you pick.",
   "keywords": [
@@ -14,7 +14,7 @@
   ],
   "license": "MIT",
   "bin": {
-    "humanize": "dist/cli.js"
+    "unstupid": "dist/cli.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
