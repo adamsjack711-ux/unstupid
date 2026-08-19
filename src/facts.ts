@@ -51,12 +51,63 @@ const SENTENCE_OPENERS = new Set([
 ]);
 
 /**
- * Numbers, with formatting normalised so that "1,000" and "1000" compare equal
- * and a trailing percent or leading currency symbol is kept as part of the fact.
+ * Magnitude words, folded onto a canonical spelling so that "$5M" and
+ * "$5 million" compare equal. Abbreviations are accepted because a rewrite that
+ * expands one into its full word has not changed the figure, and flagging that
+ * would be noise.
+ */
+const MAGNITUDES: Readonly<Record<string, string>> = {
+  hundred: 'hundred',
+  thousand: 'thousand',
+  k: 'thousand',
+  million: 'million',
+  m: 'million',
+  billion: 'billion',
+  bn: 'billion',
+  b: 'billion',
+  trillion: 'trillion',
+  tn: 'trillion',
+  t: 'trillion',
+};
+
+/**
+ * A number, its currency symbol, its percent sign, and its magnitude word.
+ *
+ * The magnitude has to be part of the fact. Without it "$4.2 billion" and
+ * "$4.2 million" both reduce to "$4.2" and a thousandfold error reads as
+ * preserved — the exact silent change to a figure this module exists to catch.
+ *
+ * Single-letter abbreviations are only accepted when they are attached to the
+ * digits ("$5M", "3k"). A spaced "5 m" is far more likely to be five metres
+ * than five million, and reading it as a magnitude would make two genuinely
+ * different figures compare equal — the failure this is meant to prevent.
+ */
+const NUMBER_PATTERN =
+  /([$£€]?\d[\d,]*(?:\.\d+)?)(%|[kmbt]\b|\s?(?:bn|tn)\b|[-\s]+(?:hundred|thousand|million|billion|trillion)\b)?/gi;
+
+/**
+ * Numbers, with formatting normalised so that "1,000" and "1000" compare equal,
+ * and with the currency symbol, percent sign, and magnitude word kept as part
+ * of the fact.
  */
 export function extractNumbers(text: string): string[] {
-  const matches = text.match(/[$£€]?\d[\d,]*(?:\.\d+)?%?/g) ?? [];
-  return matches.map((raw) => raw.replace(/,/g, ''));
+  const out: string[] = [];
+  for (const match of text.matchAll(NUMBER_PATTERN)) {
+    const digits = match[1]?.replace(/,/g, '');
+    if (digits === undefined) continue; // unreachable: group 1 is not optional
+    const suffix = match[2]?.trim().toLowerCase();
+    if (suffix === undefined || suffix === '') {
+      out.push(digits);
+      continue;
+    }
+    if (suffix === '%') {
+      out.push(`${digits}%`);
+      continue;
+    }
+    const magnitude = MAGNITUDES[suffix.replace(/^[-\s]+/, '')];
+    out.push(magnitude === undefined ? digits : `${digits} ${magnitude}`);
+  }
+  return out;
 }
 
 /** Initialisms: API, TTY, CLI, MIT, and their plurals. */

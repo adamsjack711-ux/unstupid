@@ -26,6 +26,54 @@ describe('extractNumbers', () => {
   it('finds nothing in text without numbers', () => {
     assert.deepEqual(extractNumbers('no digits here at all'), []);
   });
+
+  it('keeps the magnitude word, so billions do not compare equal to millions', () => {
+    assert.deepEqual(extractNumbers('NASA allocated $4.2 billion'), ['$4.2 billion']);
+    assert.deepEqual(extractNumbers('NASA allocated $4.2 million'), ['$4.2 million']);
+    assert.notDeepEqual(
+      extractNumbers('$4.2 billion'),
+      extractNumbers('$4.2 million'),
+    );
+  });
+
+  it('reads every magnitude word', () => {
+    assert.deepEqual(
+      extractNumbers('3 hundred, 3 thousand, 3 million, 3 billion, 3 trillion'),
+      ['3 hundred', '3 thousand', '3 million', '3 billion', '3 trillion'],
+    );
+  });
+
+  it('folds an abbreviation onto its full word, since expanding one is not a change', () => {
+    assert.deepEqual(extractNumbers('$5M'), extractNumbers('$5 million'));
+    assert.deepEqual(extractNumbers('3k'), extractNumbers('3 thousand'));
+    assert.deepEqual(extractNumbers('£5bn'), extractNumbers('£5 billion'));
+    assert.deepEqual(extractNumbers('7 tn'), extractNumbers('7 trillion'));
+  });
+
+  it('is case-insensitive about the magnitude', () => {
+    assert.deepEqual(extractNumbers('$4.2 Billion'), ['$4.2 billion']);
+    assert.deepEqual(extractNumbers('$4.2 BILLION'), ['$4.2 billion']);
+  });
+
+  it('reads a hyphenated magnitude', () => {
+    assert.deepEqual(extractNumbers('a 4.2-billion dollar program'), ['4.2 billion']);
+  });
+
+  it('does not read a spaced single letter as a magnitude', () => {
+    // "5 m" is far more likely to be five metres, and treating it as five
+    // million would make two different figures compare equal.
+    assert.deepEqual(extractNumbers('a 5 m cable'), ['5']);
+    assert.notDeepEqual(extractNumbers('a 5 m cable'), extractNumbers('5 million'));
+  });
+
+  it('does not treat an ordinary following word as a magnitude', () => {
+    assert.deepEqual(extractNumbers('a 47-page report'), ['47']);
+    assert.deepEqual(extractNumbers('12 units shipped'), ['12']);
+  });
+
+  it('keeps percentages working alongside magnitudes', () => {
+    assert.deepEqual(extractNumbers('up 12% on $4.2 billion'), ['12%', '$4.2 billion']);
+  });
 });
 
 describe('extractAcronyms', () => {
@@ -55,6 +103,26 @@ describe('extractNames', () => {
     const names = extractNames('It broke. However the fix worked. Therefore we shipped.');
     assert.ok(!names.includes('However'));
     assert.ok(!names.includes('Therefore'));
+  });
+});
+
+describe('checkFacts and magnitude', () => {
+  it('catches a thousandfold change to a figure', () => {
+    const check = checkFacts('NASA allocated $4.2 billion.', 'NASA allocated $4.2 million.');
+    assert.equal(check.ok, false);
+    assert.deepEqual(
+      check.missing.map((f) => f.value),
+      ['$4.2 billion'],
+    );
+    assert.deepEqual(
+      check.added.map((f) => f.value),
+      ['$4.2 million'],
+    );
+  });
+
+  it('does not flag an abbreviation that was merely expanded', () => {
+    const check = checkFacts('It cost $5M.', 'It cost $5 million.');
+    assert.equal(check.ok, true);
   });
 });
 
